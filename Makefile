@@ -57,6 +57,12 @@ mmsp2vtk: TKmmsp2vti.cpp $(core)
 mmsp2vtkRecolor: mmsp2vtkRecolor.cpp $(core)
 	$(compiler) $(flags) $< -o $@ -lz
 
+mmsp2vtkHaz: mmsp2vtkHaz.cpp $(core)
+	$(compiler) $(flags) $< -o $@ -lz
+
+mmsp2vtkFusionline: mmsp2vtkFusionline.cpp $(core)
+	$(compiler) $(flags) $< -o $@ -lz
+
 mmsp2vtikeeporder: mmsp2vti_keeporder.cpp $(core)
 	$(compiler) $(flags) $< -o $@ -lz
 

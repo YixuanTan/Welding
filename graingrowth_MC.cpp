@@ -1,6 +1,23 @@
 // graingrowth.hpp
 // Algorithms for 2D and 3D isotropic Monte Carlo grain growth
-// Questions/comments to gruberja@gmail.com (Jason Gruber)
+// Questions/comments to yixuan.john.tan@gmail.com (Yixuan Tan)
+// Cancel periodic b.c. inside the MMSP.grid.hpp, add:
+/*---------cancel periodic boundary condition-----------
+        if(x0[i] == g0[i]){
+				  send_min[i] = send_max[i];
+          recv_min[i] = recv_max[i];
+        }
+---------cancel periodic boundary condition-----------*/ 
+// When checking neighour during flipping, add checking: (Note the >=)
+/*
+	            if(r[0]<g0(*(ss->grid), 0) || r[0]>=g1(*(ss->grid), 0) || r[1]<g0(*(ss->grid), 1) || r[1]>=g1(*(ss->grid), 1) 
+                 || r[2]<g0(*(ss->grid), 2) || r[2]>=g1(*(ss->grid), 2))
+*/
+
+// To avoid discontinuous grian structure, make sure ghostswap(grid) before starting loop in update(); Why do this? Not clear yet, maybe file output part changes the ghost part in grid? 
+
+
+
 
 #ifndef GRAINGROWTH_UPDATE
 #define GRAINGROWTH_UPDATE
@@ -18,35 +35,70 @@
 #include"tessellate.hpp"
 #include"output.cpp"
 
-/* ------- Al-Cu alloy film
-double lambda = 10.0/1000; //This is fixed from Monte Carlo simulation, so do not change it.  here 10 um is the domain size, so each pixel is 10 nm, all length unit should be with um.
-double L_initial = 3.0*10.0/1000; // initially 30 nm diameter
-double L0 = 3.0*10.0/1000;
-double K1 = 0.74171;
-double n1 = 0.43982;
-double Q = 1.2552e5; //fitted from Mcbee, William C., and John A. McComb. "Grain growth in thin aluminum-4% copper alloy films." Thin Solid Films 30.1 (1975): 137-143.
-double n = 1.0/0.18; 
-double K_ = 2.4670; // length in um, time in second fitted from Mcbee, William C., and John A. McComb. "Grain growth in thin aluminum-4% copper alloy films." Thin Solid Films 30.1 (1975): 137-143.
-double R = 8.314;
-*/
-
-// ---------Cu film
-double lambda = 0.275/1000;  //length unit is in mm, each pixel is 0.275 um
-double L_initial = 4*0.275/1000; 
-double L0 = 4*0.275/1000; 
-double K1 = 0.74171;
-double n1 = 0.43982;
-double Q = 144675; //fitted from Gangulee, A. ”Structure of electroplated and vapordeposited copper films. III. Recrystallization and grain growth.” Journal of Applied Physics 45.9 (1974): 3749-3756.
-double n = 2; 
-double K_ = 74.306; //fitted from Gangulee, A. ”Structure of electroplated and vapordeposited copper films. III. Recrystallization and grain growth.” Journal of Applied Physics 45.9 (1974): 3749-3756.
+// ---------Welding Ti–6Al–4V
+double lambda = 30e-6;  //m
+double L_initial = 30e-6; //m 
+double L0 = 30e-6; 
+double K1 =  0.6034;
+double n1 = 0.4438;
+double Q = 1.7e5; 
+double n = 1.84; 
+double K_ = 3.01e-2; 
 double R = 8.314;
 
-void print_progress(const int step, const int steps, const int iterations);
+double T0 = 1248;
+double Tq = 2131;
+double Teta = 0.5;//0.75;
+double Tlambda =61000; // 0.5/(20/4000/610*1.0e6)
+double Tk = 20; 
+double Tv = 1.0e-3;
 
+// grid point dimension
+int dim_x = 200; 
+int dim_y = 700; 
+int dim_z = 700; 
+ 
 namespace MMSP
 {
+template <int dim> bool OutsideDomainCheck(MMSP::grid<dim, unsigned long>& grid, vector<int>* x);
+
+template <int dim> void UpdateLocalTmp(MMSP::grid<dim, unsigned long>& grid, long double physical_time){
+   vector<int> coords (dim,0);
+   if(dim==2){
+       for(int codx=x0(grid, 0); codx < x1(grid, 0); codx++) 
+         for(int cody=x0(grid, 1); cody < x1(grid, 1); cody++){
+           coords[0] = codx;
+           coords[1] = cody;
+//           grid.AccessToTmp(coords) = temp[1]+(temp[0]-temp[1])/1000*codx;
+         }
+/*-----------------------
+if(codx<=0.5*1000)
+  grid.AccessToTmp(coords) = temp[1]; 
+else if(0.25*1000<codx<=0.5*1000)
+  grid.AccessToTmp(coords) = temp[0]; 
+else if(0.5*1000<codx<=0.75*1000)
+  grid.AccessToTmp(coords) = 1000; 
+else if(0.75*1000<codx<=1000)
+  grid.AccessToTmp(coords) = 700; 
+-----------------------*/
+   }
+   else if(dim==3){
+     for(int codx=x0(grid, 0); codx < x1(grid, 0); codx++)  
+         for(int cody=x0(grid, 1); cody < x1(grid, 1); cody++) 
+           for(int codz=x0(grid, 2); codz < x1(grid, 2); codz++){
+             coords[0] = codx;
+             coords[1] = cody;
+             coords[2] = codz;
+             double r = sqrt(pow(lambda*codx,2) + pow(lambda*cody-Tv*physical_time, 2) + pow(lambda*codz,2)); // in mm
+             grid.AccessToTmp(coords) = T0 + Tq*Teta/2/3.1415926/Tk/r*exp(-Tlambda*Tv*(r-Tv*physical_time));
+             grid.AccessToTmp(coords) = grid.AccessToTmp(coords)>1878.0?1878.0:grid.AccessToTmp(coords);
+//             std::cout<<grid.AccessToTmp(coords)<<std::endl;
+           }
+   }
+}
+
 template <int dim>
-unsigned long generate(MMSP::grid<dim,int >*& grid, int seeds, int nthreads)
+unsigned long generate(MMSP::grid<dim,unsigned long >*& grid, int seeds, int nthreads)
 {
 	#if (defined CCNI) && (!defined MPI_VERSION)
 	std::cerr<<"Error: MPI is required for CCNI."<<std::endl;
@@ -58,14 +110,14 @@ unsigned long generate(MMSP::grid<dim,int >*& grid, int seeds, int nthreads)
 
 	unsigned long timer=0;
 	if (dim == 2) {
-		const int edge = 1000;
+		const int edge = 100;
 		int number_of_fields(seeds);
-		if (number_of_fields==0) number_of_fields = static_cast<int>(float(edge*edge)/(M_PI*2*2)); /* average grain is a disk of radius XXX
+		if (number_of_fields==0) number_of_fields = static_cast<int>(float(edge*edge)/(M_PI*1.5*1.5)); /* average grain is a disk of radius XXX
 , XXX cannot be smaller than 0.1, or BGQ will abort.*/
 		#ifdef MPI_VERSION
 		while (number_of_fields % np) --number_of_fields; 
 		#endif
-		grid = new MMSP::grid<dim,int>(0, 0, edge, 0, edge);
+		grid = new MMSP::grid<dim,unsigned long>(0, 0, edge, 0, edge);
 
 		#ifdef MPI_VERSION
 		number_of_fields /= np;
@@ -75,36 +127,37 @@ unsigned long generate(MMSP::grid<dim,int >*& grid, int seeds, int nthreads)
 		std::cerr<<"Error: CCNI requires MPI."<<std::endl;
 		std::exit(1);
 		#endif
-		timer = tessellate<dim,int>(*grid, number_of_fields, nthreads);
+		timer = tessellate<dim,unsigned long>(*grid, number_of_fields, nthreads);
 		#ifdef MPI_VERSION
 		MPI::COMM_WORLD.Barrier();
 		#endif
 	} else if (dim == 3) {
 		const int edge = 1000;
 		int number_of_fields(seeds);
-		if (number_of_fields==0) number_of_fields = static_cast<int>(float(edge*edge*edge)/(4./3*M_PI*10.*10.*10.)); // Average grain is a sphere of radius 10 voxels
+		if (number_of_fields==0) number_of_fields = static_cast<int>(float(dim_x*dim_y*dim_z)/(4./3*M_PI*0.5*0.5*0.5)); // Average grain is a sphere of radius 10 voxels
 		#ifdef MPI_VERSION
 		while (number_of_fields % np) --number_of_fields;
 		#endif
-		grid = new MMSP::grid<dim,int>(0, 0, edge, 0, edge, 0, edge);
+		grid = new MMSP::grid<dim,unsigned long>(0, 0, dim_x, 0, dim_y, 0, dim_z);
 
 		#ifdef MPI_VERSION
 		number_of_fields /= np;
 		#endif
 
-		timer = tessellate<dim,int >(*grid, number_of_fields, nthreads);
+//		timer = tessellate<dim,unsigned long >(*grid, number_of_fields, nthreads);
 		#ifdef MPI_VERSION
 		MPI::COMM_WORLD.Barrier();
 		#endif
 	}
 /*------------------Initial tmc----------------------*/
-  double tmc_initial = pow(L_initial/K1/lambda,1.0/n1);
-  vector<int> coords (dim,0);
+  double tmc_initial = 0.01;//pow(L_initial/K1/lambda,1.0/n1);
+  vector<int> coords(dim,0);
   if(dim==2){
-    for(int codx=x0(*grid, 0); codx <= x1(*grid, 0); codx++) 
-      for(int cody=x0(*grid, 1); cody <= x1(*grid, 1); cody++){
+    for(int codx=x0(*grid, 0); codx < x1(*grid, 0); codx++) 
+      for(int cody=x0(*grid, 1); cody < x1(*grid, 1); cody++){
         coords[0] = codx;
         coords[1] = cody;
+        (*grid)(coords) = coords[0]*dim_y + coords[1] + 1;// grain id start from 1
         (*grid).AccessToTmc(coords) = tmc_initial;
           (*grid).AccessToTmp(coords) = 1.0e6; //set the initial temp to be large enough such that initial physical time = 0.
       }
@@ -116,12 +169,12 @@ unsigned long generate(MMSP::grid<dim,int >*& grid, int seeds, int nthreads)
           coords[0] = codx;
           coords[1] = cody;
           coords[2] = codz;
+          (*grid)(coords) = coords[0]*dim_y*dim_z + coords[1]*dim_z + coords[2] + 1;// grain id start from 1
           (*grid).AccessToTmc(coords) = tmc_initial;
-          (*grid).AccessToTmp(coords) = 1.0e6;
         }
   }
-  
 /*---------------------------------------------------*/
+  UpdateLocalTmp((*grid), 0.0);
 	return timer;
 }
 
@@ -138,12 +191,12 @@ unsigned long generate(int dim, char* filename, int seeds, int nthreads)
 
 	unsigned long timer = 0;
 /*------------------Initial tmc----------------------*/
-  double tmc_initial = pow(L_initial/K1/lambda,1.0/n1);
+  double tmc_initial = 0.01;//pow(L_initial/K1/lambda,1.0/n1);
   vector<int> coords (dim,0);
 /*---------------------------------------------------*/
 
 	if (dim == 2) {
-		MMSP::grid<2,int>* grid2=NULL;
+		MMSP::grid<2,unsigned long>* grid2=NULL;
 		timer = generate<2>(grid2,seeds,nthreads);
 		assert(grid2!=NULL);
 		#ifdef BGQ
@@ -155,18 +208,18 @@ unsigned long generate(int dim, char* filename, int seeds, int nthreads)
 		if (rank==0) std::cout<<"Wrote initial file to "<<filename<<"."<<std::endl;
 		#endif
 /*------------------Initial tmc----------------------*/
-    for(int codx=x0(*grid2, 0); codx <= x1(*grid2, 0); codx++) 
-      for(int cody=x0(*grid2, 1); cody <= x1(*grid2, 1); cody++){
+    for(int codx=x0(*grid2, 0); codx < x1(*grid2, 0); codx++) 
+      for(int cody=x0(*grid2, 1); cody < x1(*grid2, 1); cody++){
         coords[0] = codx;
         coords[1] = cody;
         (*grid2).AccessToTmc(coords) = tmc_initial;
-          (*grid2).AccessToTmp(coords) = 1.0e6; //set the initial temp to be large enough such that initial physical time = 0.
+        (*grid2).AccessToTmp(coords) = 1.0e6; //set the initial temp to be large enough such that initial physical time = 0.
       }
 /*---------------------------------------------------*/
 	}
 
 	if (dim == 3) {
-		MMSP::grid<3,int>* grid3=NULL;
+		MMSP::grid<3,unsigned long>* grid3=NULL;
 		timer = generate<3>(grid3,seeds,nthreads);
 		assert(grid3!=NULL);
 		#ifdef BGQ
@@ -178,9 +231,9 @@ unsigned long generate(int dim, char* filename, int seeds, int nthreads)
 		if (rank==0) std::cout<<"Wrote initial file to "<<filename<<"."<<std::endl;
 		#endif
 /*------------------Initial tmc----------------------*/
-    for(int codx=x0(*grid3, 0); codx <= x1(*grid3, 0); codx++) 
-      for(int cody=x0(*grid3, 1); cody <= x1(*grid3, 1); cody++) 
-        for(int codz=x0(*grid3, 2); codz <= x1(*grid3, 2); codz++){
+    for(int codx=x0(*grid3, 0); codx < x1(*grid3, 0); codx++) 
+      for(int cody=x0(*grid3, 1); cody < x1(*grid3, 1); cody++) 
+        for(int codz=x0(*grid3, 2); codz < x1(*grid3, 2); codz++){
           coords[0] = codx;
           coords[1] = cody;
           coords[2] = codz;
@@ -194,7 +247,7 @@ unsigned long generate(int dim, char* filename, int seeds, int nthreads)
 }
 
 template <int dim>
-unsigned long generate(MMSP::grid<dim,int >*& grid, const char* filename)
+unsigned long generate(MMSP::grid<dim,unsigned long>*& grid, const char* filename)
 {
 	#if (defined CCNI) && (!defined MPI_VERSION)
 	std::cerr<<"Error: MPI is required for CCNI."<<std::endl;
@@ -206,37 +259,36 @@ unsigned long generate(MMSP::grid<dim,int >*& grid, const char* filename)
 
 	unsigned long timer=0;
 /*------------------Initial tmc----------------------*/
-  double tmc_initial = pow(L_initial/K1/lambda,1.0/n1);
+  double tmc_initial = 0.01;//pow(L_initial/K1/lambda,1.0/n1);
   vector<int> coords (dim,0);
 /*---------------------------------------------------*/
 
 	if (dim == 2) {
 		const int edge = 1000;
-		grid = new MMSP::grid<dim,int>(0, 0, edge, 0, edge);
+		grid = new MMSP::grid<dim,unsigned long>(0, 0, edge, 0, edge);
 		(*grid).input(filename, 1, false);
 		#ifdef MPI_VERSION
 		MPI::COMM_WORLD.Barrier();
 		#endif
 /*------------------Initial tmc----------------------*/
-    for(int codx=x0(*grid, 0); codx <= x1(*grid, 0); codx++) 
-      for(int cody=x0(*grid, 1); cody <= x1(*grid, 1); cody++){
+    for(int codx=x0(*grid, 0); codx < x1(*grid, 0); codx++) 
+      for(int cody=x0(*grid, 1); cody < x1(*grid, 1); cody++){
         coords[0] = codx;
         coords[1] = cody;
         (*grid).AccessToTmc(coords) = tmc_initial;
-          (*grid).AccessToTmp(coords) = 1.0e6; //set the initial temp to be large enough such that initial physical time = 0.
+        (*grid).AccessToTmp(coords) = 1.0e6; //set the initial temp to be large enough such that initial physical time = 0.
       }
 /*---------------------------------------------------*/
 	} else if (dim == 3) {
-		const int edge = 1000;
-		grid = new MMSP::grid<dim,int>(0, 0, edge, 0, edge, 0, edge);
+		grid = new MMSP::grid<dim,unsigned long>(0, 0, dim_x, 0, dim_y, 0, dim_z);
 		(*grid).input(filename, 1, false);
 		#ifdef MPI_VERSION
 		MPI::COMM_WORLD.Barrier();
 		#endif
 /*------------------Initial tmc----------------------*/
-    for(int codx=x0(*grid, 0); codx <= x1(*grid, 0); codx++) 
-      for(int cody=x0(*grid, 1); cody <= x1(*grid, 1); cody++) 
-        for(int codz=x0(*grid, 2); codz <= x1(*grid, 2); codz++){
+    for(int codx=x0(*grid, 0); codx < x1(*grid, 0); codx++) 
+      for(int cody=x0(*grid, 1); cody < x1(*grid, 1); cody++) 
+        for(int codz=x0(*grid, 2); codz < x1(*grid, 2); codz++){
           coords[0] = codx;
           coords[1] = cody;
           coords[2] = codz;
@@ -249,7 +301,7 @@ unsigned long generate(MMSP::grid<dim,int >*& grid, const char* filename)
 }
 
 template <int dim>
-unsigned long growthexperiment(MMSP::grid<dim,int >*& grid, const char* filename)
+unsigned long growthexperiment(MMSP::grid<dim,unsigned long >*& grid, const char* filename)
 {
 	#if (defined CCNI) && (!defined MPI_VERSION)
 	std::cerr<<"Error: MPI is required for CCNI."<<std::endl;
@@ -258,12 +310,9 @@ unsigned long growthexperiment(MMSP::grid<dim,int >*& grid, const char* filename
 	#ifdef MPI_VERSION
 	int np = MPI::COMM_WORLD.Get_size();
 	#endif
-  int nx,ny,nz;
 	unsigned long timer=0;
 	if (dim == 2) {
-	  nx = 1000;
-		ny = 1000;
-		grid = new MMSP::grid<dim,int>(0, 0, nx, 0, ny);
+		grid = new MMSP::grid<dim,unsigned long>(0, 0, dim_x, 0, dim_y);
 		#ifdef MPI_VERSION
 		MPI::COMM_WORLD.Barrier();
 		#endif
@@ -280,7 +329,7 @@ unsigned long growthexperiment(MMSP::grid<dim,int >*& grid, const char* filename
 	  exit(-1);
   }
 
-  int* ids = new int[nx*ny];
+  int* ids = new int[dim_x*dim_y];
   int grainID;
   int count = 0;
   int fields = 1;
@@ -294,16 +343,16 @@ unsigned long growthexperiment(MMSP::grid<dim,int >*& grid, const char* filename
 /*----------------------------------------------*/
 
 /*------------------Initial tmc----------------------*/
-  double tmc_initial = pow(L_initial/K1/lambda,1.0/n1);
+  double tmc_initial = 0.01;//pow(L_initial/K1/lambda,1.0/n1);
   vector<int> coords (dim,0);
   if(dim==2){
-    for(int codx=x0(*grid, 0); codx <= x1(*grid, 0); codx++) 
-      for(int cody=x0(*grid, 1); cody <= x1(*grid, 1); cody++){
+    for(int codx=x0(*grid, 0); codx < x1(*grid, 0); codx++) 
+      for(int cody=x0(*grid, 1); cody < x1(*grid, 1); cody++){
         coords[0] = codx;
         coords[1] = cody;
         (*grid).AccessToTmc(coords) = tmc_initial;
         (*grid).AccessToTmp(coords) = 1.0e6; //set the initial temp to be large enough such that initial physical time = 0.
-        (*grid)(coords) = ids[ny*codx+cody];
+        (*grid)(coords) = ids[dim_y*codx+cody];
       }
   }
   else if(dim==3){
@@ -324,7 +373,7 @@ int LargeNearestInteger(int a, int b){
 }
 
 template <int dim> struct flip_index {
-	MMSP::grid<dim, int>* grid;
+	MMSP::grid<dim, unsigned long>* grid;
   int num_of_cells_in_thread;
 	int sublattice;
   int num_of_points_to_flip;
@@ -395,10 +444,10 @@ template <int dim> void* flip_index_helper_uniformly( void* s )
     int rank = MPI::COMM_WORLD.Get_rank();
     double temperature=273.0;
 
-		int spin1 = (*(ss->grid))(x);
+		unsigned long spin1 = (*(ss->grid))(x);
 		// determine neighboring spins
     vector<int> r(dim,0);
-    std::vector<int> neighbors;
+    std::vector<unsigned long> neighbors;
     neighbors.clear();
     int number_of_same_neighours = 0;
     if(dim==2){
@@ -407,7 +456,7 @@ template <int dim> void* flip_index_helper_uniformly( void* s )
           if(!(i==0 && j==0)){
             r[0] = x[0] + i;
             r[1] = x[1] + j;
-            int spin = (*(ss->grid))(r);
+            unsigned long spin = (*(ss->grid))(r);
 
             neighbors.push_back(spin);
             if(spin==spin1) 
@@ -423,7 +472,7 @@ template <int dim> void* flip_index_helper_uniformly( void* s )
 				      r[0] = x[0] + i;
 				      r[1] = x[1] + j;
 				      r[2] = x[2] + k;
-				      int spin = (*(ss->grid))(r);
+				      unsigned long spin = (*(ss->grid))(r);
               neighbors.push_back(spin);
               if(spin==spin1) 
                 number_of_same_neighours++;
@@ -438,7 +487,7 @@ template <int dim> void* flip_index_helper_uniformly( void* s )
       continue;//continue for
     }
     //choose a random neighbor spin
-    int spin2 = neighbors[rand()%neighbors.size()];
+    unsigned long spin2 = neighbors[rand()%neighbors.size()];
 
 		if (spin1!=spin2){
 			// compute energy change
@@ -449,7 +498,7 @@ template <int dim> void* flip_index_helper_uniformly( void* s )
             if(!(i==0 && j==0)){
   					  r[0] = x[0] + i;
 	  				  r[1] = x[1] + j;
-    				  int spin = (*(ss->grid))(r);
+    				  unsigned long spin = (*(ss->grid))(r);
 				      dE += 1.0/2*((spin!=spin2)-(spin!=spin1));
             }// if(!(i==0 && j==0))
 				  }
@@ -463,7 +512,7 @@ template <int dim> void* flip_index_helper_uniformly( void* s )
 					      r[0] = x[0] + i;
 					      r[1] = x[1] + j;
 					      r[2] = x[2] + k;
-					      int spin = (*(ss->grid))(r);
+					      unsigned long spin = (*(ss->grid))(r);
 					      dE += (spin!=spin2)-(spin!=spin1);
               }
 				    }
@@ -486,8 +535,9 @@ template <int dim> void* flip_index_helper_uniformly( void* s )
 template <int dim> void* flip_index_helper( void* s )
 {
   double cos_tolerance=0.999; //cos^-1(0.999)=2.563 deg   cos^-1(0.9999)=0.8103 deg
-  srand(time(NULL)); /* seed random number generator */
-	flip_index<dim>* ss = static_cast<flip_index<dim>*>(s);
+  int rank = MPI::COMM_WORLD.Get_rank();
+  srand((unsigned)time(NULL) + (unsigned)rank); /* seed random number generator */
+  flip_index<dim>* ss = static_cast<flip_index<dim>*>(s);
   double kT=0.0;
 	vector<int> x (dim,0);
   int first_cell_start_coordinates[dim];
@@ -531,14 +581,9 @@ template <int dim> void* flip_index_helper( void* s )
     }
 
     bool site_out_of_domain = false;
-    for(int i=0; i<dim; i++){
-      if(x[i]<x0(*(ss->grid), i) || x[i]>=x1(*(ss->grid), i)){
-//      if(x[i]<x0(*(ss->grid), i) || x[i]>x1(*(ss->grid), i)-1){
-        site_out_of_domain = true;
-        break;//break from the for int i loop
-      }
-    }
-    if(site_out_of_domain == true){
+
+
+    if(OutsideDomainCheck<dim>(*(ss->grid), &x)){
       hh--;
       continue; //continue the int hh loop
     }
@@ -547,7 +592,7 @@ template <int dim> void* flip_index_helper( void* s )
 
     double temperature=(*(ss->grid)).AccessToTmp(x);
     double t_mcs = (*(ss->grid)).AccessToTmc(x);
-    double Pnumerator = exp(-Q/R/temperature)/pow(t_mcs,(n*n1-1));
+    double Pnumerator = exp(-Q/R/temperature)/pow(t_mcs,n1-1)/pow((1+K1*pow(t_mcs,n1)),n-1);
     double site_selection_probability = Pnumerator/ss->Pdenominator;
 	  double rd = double(rand())/double(RAND_MAX);
     if(rd>site_selection_probability){
@@ -555,10 +600,10 @@ template <int dim> void* flip_index_helper( void* s )
       continue;//this site wont be selected
     }
 
-		int spin1 = (*(ss->grid))(x);
+		unsigned long spin1 = (*(ss->grid))(x);
 		// determine neighboring spins
     vector<int> r(dim,0);
-    std::vector<int> neighbors;
+    std::vector<unsigned long> neighbors;
     neighbors.clear();
     int number_of_same_neighours = 0;
     if(dim==2){
@@ -570,7 +615,7 @@ template <int dim> void* flip_index_helper( void* s )
             if(r[0]<g0(*(ss->grid), 0) || r[0]>=g1(*(ss->grid), 0) || r[1]<g0(*(ss->grid), 1) || r[1]>=g1(*(ss->grid), 1) )
               continue;// neighbour outside the global boundary, skip it. 
 
-            int spin = (*(ss->grid))(r);
+            unsigned long spin = (*(ss->grid))(r);
             neighbors.push_back(spin);
             if(spin==spin1) 
               number_of_same_neighours++;
@@ -586,10 +631,13 @@ template <int dim> void* flip_index_helper( void* s )
 				      r[1] = x[1] + j;
 				      r[2] = x[2] + k;
 
-              if(r[0]<g0(*(ss->grid), 0) || r[0]>g1(*(ss->grid), 0) || r[1]<g0(*(ss->grid), 1) || r[1]>g1(*(ss->grid), 1) ||
-                 r[2]<g0(*(ss->grid), 2) || r[2]>g1(*(ss->grid), 2))
-                continue;// neighbour outside the global boundary, skip it. 
-				      int spin = (*(ss->grid))(r);
+/*----------cancel periodic b.c.-----------*/
+	            if(r[0]<g0(*(ss->grid), 0) || r[0]>=g1(*(ss->grid), 0) || r[1]<g0(*(ss->grid), 1) || r[1]>=g1(*(ss->grid), 1) 
+                 || r[2]<g0(*(ss->grid), 2) || r[2]>=g1(*(ss->grid), 2))
+                    continue;// neighbour outside the global boundary, skip it.
+/*----------cancel periodic b.c.-----------*/
+
+				      unsigned long spin = (*(ss->grid))(r);
               neighbors.push_back(spin);
               if(spin==spin1) 
                 number_of_same_neighours++;
@@ -604,24 +652,13 @@ template <int dim> void* flip_index_helper( void* s )
       continue;//continue for
     }
     //     choose a random neighbor spin
-    int spin2 = neighbors[rand()%neighbors.size()];
+    unsigned long spin2 = neighbors[rand()%neighbors.size()];
 		// choose a random spin from Q states
  //       int spin2 = rand()%200;
 		if (spin1!=spin2){
 			// compute energy change
 			double dE = 0.0;
       if(dim==2){
-/*
-        double film_thickness = 1.0e-6;
-        double h2=sin(((ss->grain_orientations)[spin2]).psi)*sin(((ss->grain_orientations)[spin2]).phi_two); 
-        double k2=sin(((ss->grain_orientations)[spin2]).psi)*cos(((ss->grain_orientations)[spin2]).phi_two);  
-        double l2=cos(((ss->grain_orientations)[spin2]).psi);
-        double h1=sin(((ss->grain_orientations)[spin1]).psi)*sin(((ss->grain_orientations)[spin1]).phi_two);   
-        double k1=sin(((ss->grain_orientations)[spin1]).psi)*cos(((ss->grain_orientations)[spin1]).phi_two);  
-        double l1=cos(((ss->grain_orientations)[spin1]).psi);
-*/
-	//      		  	  dE += 2*( SurfaceEnergy(h2, k2, l2, temperature)-SurfaceEnergy(h1, k1, l1, temperature)); //surface and interface energy
- //           + film_thickness*(StrainEnergyDenstiy(h2, k2, l2, temperature)-StrainEnergyDenstiy(h1, k1, l1, temperature));//elastic strain energy
 			  for (int i=-1; i<=1; i++){
 				  for (int j=-1; j<=1; j++){
             if(!(i==0 && j==0)){
@@ -630,200 +667,8 @@ template <int dim> void* flip_index_helper( void* s )
 
 	            if(r[0]<g0(*(ss->grid), 0) || r[0]>=g1(*(ss->grid), 0) || r[1]<g0(*(ss->grid), 1) || r[1]>=g1(*(ss->grid), 1) )
               continue;// neighbour outside the global boundary, skip it. 
-    				  int spin = (*(ss->grid))(r);
-				  dE += 1.0/2*((spin!=spin2)-(spin!=spin1));
-				    //				                dE += 1.0/2*((spin!=spin2)-(spin!=spin1))*film_thickness*LargeAngleGrainBoundaryEnergy(temperature); // grain boundary energy  
-/*
-              bool incoherent_twin_boundary = false, coherent_twin_boundary = false;
-              double max,medium,min;
-              //check with index before
-              double h=sin(((ss->grain_orientations)[spin]).psi)*sin(((ss->grain_orientations)[spin]).phi_two);  
-              double k=sin(((ss->grain_orientations)[spin]).psi)*cos(((ss->grain_orientations)[spin]).phi_two);  
-              double l=cos(((ss->grain_orientations)[spin]).psi);
-              if(CheckSixtyDegreeRotation(h,k,l,h1,k1,l1)){// if h k l is 60 degree away from h1 k1 l1 w.r.t. rotating around <111>
-                incoherent_twin_boundary = true;
-                if(i==0){//i=0 j!=0   x[0] along rolling direction
-                  double transverse_direction[3];
-                  //check self
-                  transverse_direction[0]=sin(((ss->grain_orientations)[spin1]).phi_one)*cos(((ss->grain_orientations)[spin1]).phi_two)
-                                         +cos(((ss->grain_orientations)[spin1]).phi_one)*sin(((ss->grain_orientations)[spin1]).phi_two)
-                                          *cos(((ss->grain_orientations)[spin1]).psi);  
-                  transverse_direction[1]=-sin(((ss->grain_orientations)[spin1]).phi_one)*sin(((ss->grain_orientations)[spin1]).phi_two)
-                                         +cos(((ss->grain_orientations)[spin1]).phi_one)*cos(((ss->grain_orientations)[spin1]).phi_two)
-                                          *cos(((ss->grain_orientations)[spin1]).psi);  
-                  transverse_direction[2]=-cos(((ss->grain_orientations)[spin1]).phi_one)*sin(((ss->grain_orientations)[spin1]).psi); 
-                  transverse_direction[0]=fabs(transverse_direction[0]);
-                  transverse_direction[1]=fabs(transverse_direction[1]);
-                  transverse_direction[2]=fabs(transverse_direction[2]);
-                  max=MaxOfThreeNumber(transverse_direction[0],transverse_direction[1],transverse_direction[2]);
-                  medium=MediumOfThreeNumber(transverse_direction[0],transverse_direction[1],transverse_direction[2]);
-                  min=MinOfThreeNumber(transverse_direction[0],transverse_direction[1],transverse_direction[2]);
-                  double cosine_td_trione=fabs((-max+medium+min))/sqrt(3.0)/sqrt(max*max+medium*medium+min*min);
-                  //if coheret twin
-                  //check neighbour
-                  if(cosine_td_trione>cos_tolerance){
-                    transverse_direction[0]=sin(((ss->grain_orientations)[spin]).phi_one)*cos(((ss->grain_orientations)[spin]).phi_two)
-                                           +cos(((ss->grain_orientations)[spin]).phi_one)*sin(((ss->grain_orientations)[spin]).phi_two)
-                                            *cos(((ss->grain_orientations)[spin]).psi);  
-                    transverse_direction[1]=-sin(((ss->grain_orientations)[spin]).phi_one)*sin(((ss->grain_orientations)[spin]).phi_two)
-                                           +cos(((ss->grain_orientations)[spin]).phi_one)*cos(((ss->grain_orientations)[spin]).phi_two)
-                                            *cos(((ss->grain_orientations)[spin]).psi);  
-                    transverse_direction[2]=-cos(((ss->grain_orientations)[spin]).phi_one)*sin(((ss->grain_orientations)[spin]).psi); 
-                    transverse_direction[0]=fabs(transverse_direction[0]);
-                    transverse_direction[1]=fabs(transverse_direction[1]);
-                    transverse_direction[2]=fabs(transverse_direction[2]);
-                    max=MaxOfThreeNumber(transverse_direction[0],transverse_direction[1],transverse_direction[2]);
-                    medium=MediumOfThreeNumber(transverse_direction[0],transverse_direction[1],transverse_direction[2]);
-                    min=MinOfThreeNumber(transverse_direction[0],transverse_direction[1],transverse_direction[2]);
-                    cosine_td_trione=fabs((-max+medium+min))/sqrt(3.0)/sqrt(max*max+medium*medium+min*min);
-                    if(cosine_td_trione>cos_tolerance){
-                      incoherent_twin_boundary = false;
-                      coherent_twin_boundary = true;
-                      dE += -0.5*film_thickness*CoherentTwinBoundaryEnergy(temperature);
-                    }
-                  }
-                }else{// i!=0 j=0  x[1] along rolling direction
-                  double rolling_direction[3];
-                  double cosine_rd_trione;
-                  //check self
-                  rolling_direction[0]=cos(((ss->grain_orientations)[spin1]).phi_one)*cos(((ss->grain_orientations)[spin1]).phi_two)
-                                      -sin(((ss->grain_orientations)[spin1]).phi_one)*sin(((ss->grain_orientations)[spin1]).phi_two)
-                                       *cos(((ss->grain_orientations)[spin1]).psi);  
-                  rolling_direction[1]=-cos(((ss->grain_orientations)[spin1]).phi_one)*sin(((ss->grain_orientations)[spin1]).phi_two)
-                                      -sin(((ss->grain_orientations)[spin1]).phi_one)*cos(((ss->grain_orientations)[spin1]).phi_two)
-                                       *cos(((ss->grain_orientations)[spin1]).psi); 
-                  rolling_direction[2]=sin(((ss->grain_orientations)[spin1]).phi_one)*sin(((ss->grain_orientations)[spin1]).psi); 
-                  rolling_direction[0]=fabs(rolling_direction[0]);
-                  rolling_direction[1]=fabs(rolling_direction[1]);
-                  rolling_direction[2]=fabs(rolling_direction[2]);
-                  double max=MaxOfThreeNumber(rolling_direction[0],rolling_direction[1],rolling_direction[2]);
-                  double medium=MediumOfThreeNumber(rolling_direction[0],rolling_direction[1],rolling_direction[2]);
-                  double min=MinOfThreeNumber(rolling_direction[0],rolling_direction[1],rolling_direction[2]);
-                  cosine_rd_trione=fabs((-max+medium+min))/sqrt(3.0)/sqrt(max*max+medium*medium+min*min);
-                  //check neighbour
-                  if(cosine_rd_trione>cos_tolerance){
-                    rolling_direction[0]=cos(((ss->grain_orientations)[spin1]).phi_one)*cos(((ss->grain_orientations)[spin1]).phi_two)
-                                        -sin(((ss->grain_orientations)[spin1]).phi_one)*sin(((ss->grain_orientations)[spin1]).phi_two)
-                                         *cos(((ss->grain_orientations)[spin1]).psi);  
-                    rolling_direction[1]=-cos(((ss->grain_orientations)[spin1]).phi_one)*sin(((ss->grain_orientations)[spin1]).phi_two)
-                                        -sin(((ss->grain_orientations)[spin1]).phi_one)*cos(((ss->grain_orientations)[spin1]).phi_two)
-                                         *cos(((ss->grain_orientations)[spin1]).psi); 
-                    rolling_direction[2]=sin(((ss->grain_orientations)[spin1]).phi_one)*sin(((ss->grain_orientations)[spin1]).psi); 
-                    rolling_direction[0]=fabs(rolling_direction[0]);
-                    rolling_direction[1]=fabs(rolling_direction[1]);
-                    rolling_direction[2]=fabs(rolling_direction[2]);
-                    max=MaxOfThreeNumber(rolling_direction[0],rolling_direction[1],rolling_direction[2]);
-                    medium=MediumOfThreeNumber(rolling_direction[0],rolling_direction[1],rolling_direction[2]);
-                    min=MinOfThreeNumber(rolling_direction[0],rolling_direction[1],rolling_direction[2]);
-                    cosine_rd_trione=fabs((-max+medium+min))/sqrt(3.0)/sqrt(max*max+medium*medium+min*min);
-                    cosine_rd_trione=fabs((-max+medium+min))/sqrt(3.0)/sqrt(max*max+medium*medium+min*min);
-                    if(cosine_rd_trione>cos_tolerance){
-                      incoherent_twin_boundary = false;
-                      coherent_twin_boundary = true;
-                      dE += -0.5*film_thickness*CoherentTwinBoundaryEnergy(temperature);
-                    }
-                  }
-                }
-              }
-              if(incoherent_twin_boundary == true){
-                dE += -0.5*film_thickness*IncoherentTwinBoundaryEnergy(temperature);
-              }
-              else if(incoherent_twin_boundary == false && coherent_twin_boundary == false){
-                dE += -0.5*(spin!=spin1)*film_thickness*LargeAngleGrainBoundaryEnergy(temperature); // grain boundary energy  
-              } 
-              //check with index after flip
-              incoherent_twin_boundary = false;
-              coherent_twin_boundary = false;
-              if(CheckSixtyDegreeRotation(h,k,l,h2,k2,l2)){//60 deg rotation from ND to ND
-                incoherent_twin_boundary = true;
-                if(i==0){//i=0 j!=0   x[0] along rolling direction
-                  double transverse_direction[3];
-                  //check self
-                  transverse_direction[0]=sin(((ss->grain_orientations)[spin2]).phi_one)*cos(((ss->grain_orientations)[spin2]).phi_two)
-                                         +cos(((ss->grain_orientations)[spin2]).phi_one)*sin(((ss->grain_orientations)[spin2]).phi_two)
-                                          *cos(((ss->grain_orientations)[spin2]).psi);  
-                  transverse_direction[1]=-sin(((ss->grain_orientations)[spin2]).phi_one)*sin(((ss->grain_orientations)[spin2]).phi_two)
-                                         +cos(((ss->grain_orientations)[spin2]).phi_one)*cos(((ss->grain_orientations)[spin2]).phi_two)
-                                          *cos(((ss->grain_orientations)[spin2]).psi);  
-                  transverse_direction[2]=-cos(((ss->grain_orientations)[spin2]).phi_one)*sin(((ss->grain_orientations)[spin2]).psi); 
-                  transverse_direction[0]=fabs(transverse_direction[0]);
-                  transverse_direction[1]=fabs(transverse_direction[1]);
-                  transverse_direction[2]=fabs(transverse_direction[2]);
-                  max=MaxOfThreeNumber(transverse_direction[0],transverse_direction[1],transverse_direction[2]);
-                  medium=MediumOfThreeNumber(transverse_direction[0],transverse_direction[1],transverse_direction[2]);
-                  min=MinOfThreeNumber(transverse_direction[0],transverse_direction[1],transverse_direction[2]);
-                  double cosine_td_trione=fabs((-max+medium+min))/sqrt(3.0)/sqrt(max*max+medium*medium+min*min);
-                  //check neighbour
-                  if(cosine_td_trione>cos_tolerance){
-                    transverse_direction[0]=sin(((ss->grain_orientations)[spin]).phi_one)*cos(((ss->grain_orientations)[spin]).phi_two)
-                                           +cos(((ss->grain_orientations)[spin]).phi_one)*sin(((ss->grain_orientations)[spin]).phi_two)
-                                            *cos(((ss->grain_orientations)[spin]).psi);  
-                    transverse_direction[1]=-sin(((ss->grain_orientations)[spin]).phi_one)*sin(((ss->grain_orientations)[spin]).phi_two)
-                                           +cos(((ss->grain_orientations)[spin]).phi_one)*cos(((ss->grain_orientations)[spin]).phi_two)
-                                            *cos(((ss->grain_orientations)[spin]).psi);  
-                    transverse_direction[2]=-cos(((ss->grain_orientations)[spin]).phi_one)*sin(((ss->grain_orientations)[spin]).psi); 
-                    transverse_direction[0]=fabs(transverse_direction[0]);
-                    transverse_direction[1]=fabs(transverse_direction[1]);
-                    transverse_direction[2]=fabs(transverse_direction[2]);
-                    max=MaxOfThreeNumber(transverse_direction[0],transverse_direction[1],transverse_direction[2]);
-                    medium=MediumOfThreeNumber(transverse_direction[0],transverse_direction[1],transverse_direction[2]);
-                    min=MinOfThreeNumber(transverse_direction[0],transverse_direction[1],transverse_direction[2]);
-                    cosine_td_trione=fabs((-max+medium+min))/sqrt(3.0)/sqrt(max*max+medium*medium+min*min);
-                    if(cosine_td_trione>cos_tolerance){
-                      incoherent_twin_boundary = false;
-                      coherent_twin_boundary = true;
-                      dE += 0.5*film_thickness*CoherentTwinBoundaryEnergy(temperature);
-                    }
-                  }
-                }else{// i!=0 j=0  x[1] along rolling direction
-                  double rolling_direction[3];
-                  double cosine_rd_trione;
-                  //check self
-                  rolling_direction[0]=cos(((ss->grain_orientations)[spin2]).phi_one)*cos(((ss->grain_orientations)[spin2]).phi_two)
-                                      -sin(((ss->grain_orientations)[spin2]).phi_one)*sin(((ss->grain_orientations)[spin2]).phi_two)
-                                       *cos(((ss->grain_orientations)[spin2]).psi);  
-                  rolling_direction[1]=-cos(((ss->grain_orientations)[spin2]).phi_one)*sin(((ss->grain_orientations)[spin2]).phi_two)
-                                      -sin(((ss->grain_orientations)[spin2]).phi_one)*cos(((ss->grain_orientations)[spin2]).phi_two)
-                                       *cos(((ss->grain_orientations)[spin2]).psi); 
-                  rolling_direction[2]=sin(((ss->grain_orientations)[spin2]).phi_one)*sin(((ss->grain_orientations)[spin2]).psi); 
-                  rolling_direction[0]=fabs(rolling_direction[0]);
-                  rolling_direction[1]=fabs(rolling_direction[1]);
-                  rolling_direction[2]=fabs(rolling_direction[2]);
-                  double max=MaxOfThreeNumber(rolling_direction[0],rolling_direction[1],rolling_direction[2]);
-                  double medium=MediumOfThreeNumber(rolling_direction[0],rolling_direction[1],rolling_direction[2]);
-                  double min=MinOfThreeNumber(rolling_direction[0],rolling_direction[1],rolling_direction[2]);
-                  cosine_rd_trione=fabs((-max+medium+min))/sqrt(3.0)/sqrt(max*max+medium*medium+min*min);
-                  //check neighbour
-                  if(cosine_rd_trione>cos_tolerance){
-                    rolling_direction[0]=cos(((ss->grain_orientations)[spin2]).phi_one)*cos(((ss->grain_orientations)[spin2]).phi_two)
-                                        -sin(((ss->grain_orientations)[spin2]).phi_one)*sin(((ss->grain_orientations)[spin2]).phi_two)
-                                         *cos(((ss->grain_orientations)[spin2]).psi);  
-                    rolling_direction[1]=-cos(((ss->grain_orientations)[spin2]).phi_one)*sin(((ss->grain_orientations)[spin2]).phi_two)
-                                        -sin(((ss->grain_orientations)[spin2]).phi_one)*cos(((ss->grain_orientations)[spin2]).phi_two)
-                                         *cos(((ss->grain_orientations)[spin2]).psi); 
-                    rolling_direction[2]=sin(((ss->grain_orientations)[spin2]).phi_one)*sin(((ss->grain_orientations)[spin2]).psi); 
-                    rolling_direction[0]=fabs(rolling_direction[0]);
-                    rolling_direction[1]=fabs(rolling_direction[1]);
-                    rolling_direction[2]=fabs(rolling_direction[2]);
-                    max=MaxOfThreeNumber(rolling_direction[0],rolling_direction[1],rolling_direction[2]);
-                    medium=MediumOfThreeNumber(rolling_direction[0],rolling_direction[1],rolling_direction[2]);
-                    min=MinOfThreeNumber(rolling_direction[0],rolling_direction[1],rolling_direction[2]);
-                    cosine_rd_trione=fabs((-max+medium+min))/sqrt(3.0)/sqrt(max*max+medium*medium+min*min);
-                    cosine_rd_trione=fabs((-max+medium+min))/sqrt(3.0)/sqrt(max*max+medium*medium+min*min);
-                    if(cosine_rd_trione>cos_tolerance){
-                      incoherent_twin_boundary = false;
-                      coherent_twin_boundary = true;
-                      dE += 0.5*film_thickness*CoherentTwinBoundaryEnergy(temperature);
-                    }
-                  }
-                }
-              }
-              if(incoherent_twin_boundary == true){
-                dE += 0.5*film_thickness*IncoherentTwinBoundaryEnergy(temperature);
-              }
-              else if(incoherent_twin_boundary == false && coherent_twin_boundary == false){
-                dE += 0.5*(spin!=spin2)*film_thickness*LargeAngleGrainBoundaryEnergy(temperature); // grain boundary energy  
-		          }*/
+    				  unsigned long spin = (*(ss->grid))(r);
+				      dE += 1.0/2*((spin!=spin2)-(spin!=spin1));
             }// if(!(i==0 && j==0))
 				  }
         }
@@ -837,11 +682,14 @@ template <int dim> void* flip_index_helper( void* s )
 					      r[1] = x[1] + j;
 					      r[2] = x[2] + k;
 
-                if(r[0]<g0(*(ss->grid), 0) || r[0]>g1(*(ss->grid), 0) || r[1]<g0(*(ss->grid), 1) || r[1]>g1(*(ss->grid), 1) ||
-                   r[2]<g0(*(ss->grid), 2) || r[2]>g1(*(ss->grid), 2))
-                  continue;// neighbour outside the global boundary, skip it.
-					      int spin = (*(ss->grid))(r);
-					      dE += (spin!=spin2)-(spin!=spin1);
+/*----------cancel periodic b.c.-----------*/
+	            if(r[0]<g0(*(ss->grid), 0) || r[0]>=g1(*(ss->grid), 0) || r[1]<g0(*(ss->grid), 1) || r[1]>=g1(*(ss->grid), 1) 
+                 || r[2]<g0(*(ss->grid), 2) || r[2]>=g1(*(ss->grid), 2))
+                    continue;// neighbour outside the global boundary, skip it.
+/*----------cancel periodic b.c.-----------*/
+
+					      unsigned long spin = (*(ss->grid))(r);
+					      dE += 1.0/2*((spin!=spin2)-(spin!=spin1));
               }
 				    }
           }
@@ -849,7 +697,7 @@ template <int dim> void* flip_index_helper( void* s )
       }
 			// attempt a spin flip
 			double r = double(rand())/double(RAND_MAX);
-      kT = 1.3806488e-23*temperature;
+      kT = 1.3806488e-23*273;
 //	      int rank = MPI::COMM_WORLD.Get_rank();
 			if (dE <= 0.0) {
         (*(ss->grid))(x) = spin2;
@@ -862,11 +710,10 @@ template <int dim> void* flip_index_helper( void* s )
 	return NULL;
 }
 
-template <int dim> bool OutsideDomainCheck(MMSP::grid<dim, int>& grid, vector<int>* x){
+template <int dim> bool OutsideDomainCheck(MMSP::grid<dim, unsigned long>& grid, vector<int>* x){
   bool outside_domain=false;
   for(int i=0; i<dim; i++){
-    if((*x)[i]<x0(grid, i) || (*x)[i]>x1(grid, i)){
-//    if((*x)[i]<x0(grid, i) || (*x)[i]>x1(grid, i)-1){
+    if((*x)[i]<x0(grid, i) || (*x)[i]>x1(grid, i)-1){
       outside_domain=true;
       break;
     }
@@ -900,21 +747,6 @@ template <int dim> unsigned long update_uniformly(MMSP::grid<dim, int>& grid, in
 	if (rank==0) print_progress(0, steps, iterations);
 	#endif
 
-/*
-  int edge = 1000;
-  int number_of_fields = static_cast<int>(float(edge*edge)/(M_PI*10.*10.)); // average grain is a disk of radius 10
-  #ifdef MPI_VERSION
-	while (number_of_fields % np) --number_of_fields;
-  #endif
-*/
-/*
-  EulerAngles *grain_orientations = new EulerAngles[200];
-  if(rank==0){
-    ReadData(grain_orientations);
-  }
-	MPI::COMM_WORLD.Barrier();
-  MPI::COMM_WORLD.Bcast(grain_orientations, 200*3, MPI_DOUBLE, 0);
-*/
 /*-----------------------------------------------*/
 /*---------------generate cells------------------*/
 /*-----------------------------------------------*/
@@ -1097,8 +929,8 @@ template <int dim> unsigned long update_uniformly(MMSP::grid<dim, int>& grid, in
 			MPI::COMM_WORLD.Barrier();
 			#endif
 
-			ghostswap(grid, sublattice); // once looped over a "color", ghostswap.
-//			ghostswap(grid); // once looped over a "color", ghostswap.
+//			ghostswap(grid, sublattice); // once looped over a "color", ghostswap.
+			ghostswap(grid); // once looped over a "color", ghostswap.
       #ifdef MPI_VERSION
 			MPI::COMM_WORLD.Barrier();
                 #endif
@@ -1138,7 +970,7 @@ template <int dim> unsigned long update_uniformly(MMSP::grid<dim, int>& grid, in
 	return total_update_time/np; // average update time
 }
 
-template <int dim> double PdenominatorMax(MMSP::grid<dim, int>& grid, double& tmc_at_PdenominatorMax, double& tmp_at_PdenominatorMax){
+template <int dim> double PdenominatorMax(MMSP::grid<dim, unsigned long>& grid, double& tmc_at_PdenominatorMax, double& tmp_at_PdenominatorMax){
    double Pdenominator_max = 0.0;
    vector<int> coords (dim,0);
    if(dim==2){
@@ -1147,7 +979,8 @@ template <int dim> double PdenominatorMax(MMSP::grid<dim, int>& grid, double& tm
            coords[0] = codx;
            coords[1] = cody;
            double temperature = grid.AccessToTmp(coords);
-           double Pdenominator = exp(-Q/R/temperature)/pow(grid.AccessToTmc(coords), (n*n1-1));
+           double tmc_local = grid.AccessToTmc(coords);
+           double Pdenominator = exp(-Q/R/temperature)/pow(tmc_local,n1-1)/pow((1+K1*pow(tmc_local,n1)),n-1);
            if(Pdenominator > Pdenominator_max){
              Pdenominator_max = Pdenominator;
              tmc_at_PdenominatorMax = grid.AccessToTmc(coords);
@@ -1163,82 +996,224 @@ template <int dim> double PdenominatorMax(MMSP::grid<dim, int>& grid, double& tm
            coords[1] = cody;
            coords[2] = codz;
            double temperature = grid.AccessToTmp(coords);
-           double Pdenominator = exp(-Q/R/temperature)/pow(grid.AccessToTmc(coords), (n*n1-1));
+           double tmc_local = grid.AccessToTmc(coords);
+           double Pdenominator = exp(-Q/R/temperature)/pow(tmc_local,n1-1)/pow((1+K1*pow(tmc_local,n1)),n-1);
            if(Pdenominator > Pdenominator_max){
              Pdenominator_max = Pdenominator;
              tmc_at_PdenominatorMax = grid.AccessToTmc(coords);
-             tmp_at_PdenominatorMax = grid.AccessToTmp(coords);
+             tmp_at_PdenominatorMax = temperature;
            }
         }
    }
    return Pdenominator_max;
 }
 
-template <int dim> void UpdateLocalTmc(MMSP::grid<dim, int>& grid, double t_inc){
+template <int dim> void UpdateLocalTmc(MMSP::grid<dim, unsigned long>& grid, double t_inc){
    vector<int> coords (dim,0);
    if(dim==2){
-       for(int codx=x0(grid, 0); codx <= x1(grid, 0); codx++) 
-         for(int cody=x0(grid, 1); cody <= x1(grid, 1); cody++){
+       for(int codx=x0(grid, 0); codx < x1(grid, 0); codx++) 
+         for(int cody=x0(grid, 1); cody < x1(grid, 1); cody++){
            coords[0] = codx;
            coords[1] = cody;
-           long double exp_eqn_rhs = pow(K1*lambda*pow(grid.AccessToTmc(coords), n1), n) - pow(L0, n);
+           double tmc_local = grid.AccessToTmc(coords);
+           long double exp_eqn_rhs = pow(lambda*(1+K1*pow(tmc_local, n1)), n) - pow(L0, n);
            long double temperature = grid.AccessToTmp(coords);
            exp_eqn_rhs += K_*t_inc*exp(-Q/R/temperature);
-           grid.AccessToTmc(coords) = pow(1.0/K1/lambda*pow(exp_eqn_rhs+pow(L0, n),1.0/n), 1.0/n1);  
+           grid.AccessToTmc(coords) = pow(1.0/K1/lambda*pow(exp_eqn_rhs+pow(L0, n),1.0/n)-1.0/K1, 1.0/n1);  
          }
    }
    else if(dim==3){
-     for(int codx=x0(grid, 0); codx <= x1(grid, 0); codx++)  
-         for(int cody=x0(grid, 1); cody <= x1(grid, 1); cody++) 
-           for(int codz=x0(grid, 2); codz <= x1(grid, 2); codz++){
+     for(int codx=x0(grid, 0); codx < x1(grid, 0); codx++)  
+         for(int cody=x0(grid, 1); cody < x1(grid, 1); cody++) 
+           for(int codz=x0(grid, 2); codz < x1(grid, 2); codz++){
              coords[0] = codx;
              coords[1] = cody;
              coords[2] = codz;
-             long double exp_eqn_rhs = pow(K1*lambda*pow(grid.AccessToTmc(coords), n1), n) - pow(L0, n);
+             double tmc_local = grid.AccessToTmc(coords);
+             long double exp_eqn_rhs = pow(lambda*(1+K1*pow(tmc_local, n1)), n) - pow(L0, n);
              long double temperature = grid.AccessToTmp(coords);
              exp_eqn_rhs += K_*t_inc*exp(-Q/R/temperature);
-             grid.AccessToTmc(coords) = pow(1.0/K1/lambda*pow(exp_eqn_rhs+pow(L0, n),1.0/n), 1.0/n1);  
+             grid.AccessToTmc(coords) = pow(1.0/K1/lambda*pow(exp_eqn_rhs+pow(L0, n),1.0/n)-1.0/K1, 1.0/n1);  
            }
    }
 }
 
-template <int dim> void UpdateLocalTmp(MMSP::grid<dim, int>& grid, long double physical_time, double* temp){
+template <int dim> void calCulateGrainSize(MMSP::grid<dim, unsigned long>& grid, unsigned long &number_of_grains){
    vector<int> coords (dim,0);
    if(dim==2){
-       for(int codx=x0(grid, 0); codx <= x1(grid, 0); codx++) 
-         for(int cody=x0(grid, 1); cody <= x1(grid, 1); cody++){
-           coords[0] = codx;
-           coords[1] = cody;
-//           grid.AccessToTmp(coords) = temp[1]+(temp[0]-temp[1])/1000*codx;
-if(codx<=0.5*1000)
-  grid.AccessToTmp(coords) = temp[1]; 
-else
-  grid.AccessToTmp(coords) = temp[0]; 
-         }
-/*-----------------------
-if(codx<=0.5*1000)
-  grid.AccessToTmp(coords) = temp[1]; 
-else if(0.25*1000<codx<=0.5*1000)
-  grid.AccessToTmp(coords) = temp[0]; 
-else if(0.5*1000<codx<=0.75*1000)
-  grid.AccessToTmp(coords) = 1000; 
-else if(0.75*1000<codx<=1000)
-  grid.AccessToTmp(coords) = 700; 
------------------------*/
+      int midx = (g0(grid, 0)+g1(grid, 0))/2;
+      int midy = (g0(grid, 1)+g1(grid, 1))/2;
+      if(midx>=x0(grid, 0) && midx<x1(grid, 0)){
+        unsigned long index_record = -1;
+        for(int cody=x0(grid, 1); cody < x1(grid, 1); cody++){
+          coords[0] = midx;
+          coords[1] = cody;
+          if(grid(coords)!=index_record){
+            index_record = grid(coords);
+            number_of_grains = number_of_grains + 1;       
+          }
+        }
+        if(x1(grid, 1) < g1(grid, 1)){
+          coords[1] = x1(grid, 1);
+          if(grid(coords) == index_record && number_of_grains != 0){
+            number_of_grains = number_of_grains - 1; 
+          }
+        }
+      }
+      if(midy>=x0(grid, 1) && midy<x1(grid, 1)){
+        unsigned long index_record = -1;
+        for(int codx=x0(grid, 0); codx < x1(grid, 0); codx++){
+          coords[0] = codx;
+          coords[1] = midy;
+          if(grid(coords)!=index_record){
+            index_record = grid(coords);
+            number_of_grains = number_of_grains + 1;       
+          }
+        }
+        if(x1(grid, 0) < g1(grid, 0)){
+          coords[0] = x1(grid, 0);
+          if(grid(coords) == index_record && number_of_grains != 0){
+            number_of_grains = number_of_grains - 1; 
+          }
+        }
+      }
    }
    else if(dim==3){
-     for(int codx=x0(grid, 0); codx <= x1(grid, 0); codx++)  
-         for(int cody=x0(grid, 1); cody <= x1(grid, 1); cody++) 
-           for(int codz=x0(grid, 2); codz <= x1(grid, 2); codz++){
-             coords[0] = codx;
-             coords[1] = cody;
-             coords[2] = codz;
-             grid.AccessToTmp(coords) = 473 + 273.0*sin(3.14/1000*codx + 3.14/(1.0e5)*physical_time);
-           }
+      int midx = (g0(grid, 0)+g1(grid, 0))/2;
+      int midy = (g0(grid, 1)+g1(grid, 1))/2;
+      int midz = (g0(grid, 2)+g1(grid, 2))/2;
+      if(midx>=x0(grid, 0) && midx<x1(grid, 0) && midz>=x0(grid, 2) && midz<x1(grid, 2)){
+        unsigned long index_record = -1;
+        for(int cody=x0(grid, 1); cody < x1(grid, 1); cody++){
+          coords[0] = midx;
+          coords[1] = cody;
+          coords[2] = midz;
+          if(grid(coords)!=index_record){
+            index_record = grid(coords);
+            number_of_grains = number_of_grains + 1;       
+          }
+        }
+        if(x1(grid, 1) < g1(grid, 1)){
+          coords[1] = x1(grid, 1);
+          if(grid(coords) == index_record && number_of_grains != 0){
+            number_of_grains = number_of_grains - 1; 
+          }
+        }
+      }
+      if(0.25*midx>=x0(grid, 0) && 0.25*midx<x1(grid, 0) && 0.25*midz>=x0(grid, 2) && 0.25*midz<x1(grid, 2)){
+        unsigned long index_record = -1;
+        for(int cody=x0(grid, 1); cody < x1(grid, 1); cody++){
+          coords[0] = 0.25*midx;
+          coords[1] = cody;
+          coords[2] = 0.25*midz;
+          if(grid(coords)!=index_record){
+            index_record = grid(coords);
+            number_of_grains = number_of_grains + 1;       
+          }
+        }
+        if(x1(grid, 1) < g1(grid, 1)){
+          coords[1] = x1(grid, 1);
+          if(grid(coords) == index_record && number_of_grains != 0){
+            number_of_grains = number_of_grains - 1; 
+          }
+        }
+      }
+      if(0.75*midx>=x0(grid, 0) && 0.75*midx<x1(grid, 0) && 0.75*midz>=x0(grid, 2) && 0.75*midz<x1(grid, 2)){
+        unsigned long index_record = -1;
+        for(int cody=x0(grid, 1); cody < x1(grid, 1); cody++){
+          coords[0] = 0.75*midx;
+          coords[1] = cody;
+          coords[2] = 0.75*midz;
+          if(grid(coords)!=index_record){
+            index_record = grid(coords);
+            number_of_grains = number_of_grains + 1;       
+          }
+        }
+        if(x1(grid, 1) < g1(grid, 1)){
+          coords[1] = x1(grid, 1);
+          if(grid(coords) == index_record && number_of_grains != 0){
+            number_of_grains = number_of_grains - 1; 
+          }
+        }
+      }
+      if(0.75*midx>=x0(grid, 0) && 0.75*midx<x1(grid, 0) && 0.25*midz>=x0(grid, 2) && 0.25*midz<x1(grid, 2)){
+        unsigned long index_record = -1;
+        for(int cody=x0(grid, 1); cody < x1(grid, 1); cody++){
+          coords[0] = 0.75*midx;
+          coords[1] = cody;
+          coords[2] = 0.25*midz;
+          if(grid(coords)!=index_record){
+            index_record = grid(coords);
+            number_of_grains = number_of_grains + 1;       
+          }
+        }
+        if(x1(grid, 1) < g1(grid, 1)){
+          coords[1] = x1(grid, 1);
+          if(grid(coords) == index_record && number_of_grains != 0){
+            number_of_grains = number_of_grains - 1; 
+          }
+        }
+      }
+      if(0.25*midx>=x0(grid, 0) && 0.25*midx<x1(grid, 0) && 0.75*midz>=x0(grid, 2) && 0.75*midz<x1(grid, 2)){
+        unsigned long index_record = -1;
+        for(int cody=x0(grid, 1); cody < x1(grid, 1); cody++){
+          coords[0] = 0.25*midx;
+          coords[1] = cody;
+          coords[2] = 0.75*midz;
+          if(grid(coords)!=index_record){
+            index_record = grid(coords);
+            number_of_grains = number_of_grains + 1;       
+          }
+        }
+        if(x1(grid, 1) < g1(grid, 1)){
+          coords[1] = x1(grid, 1);
+          if(grid(coords) == index_record && number_of_grains != 0){
+            number_of_grains = number_of_grains - 1; 
+          }
+        }
+      }
+/*
+      if(midy>=x0(grid, 1) && midy<x1(grid, 1) && midz>=x0(grid, 2) && midz<x1(grid, 2)){
+        unsigned long index_record = -1;
+        for(int codx=x0(grid, 0); codx < x1(grid, 0); codx++){
+          coords[0] = codx;
+          coords[1] = midy;
+          coords[2] = midz;
+          if(grid(coords)!=index_record){
+            index_record = grid(coords);
+            number_of_grains = number_of_grains + 1;       
+          }
+        }
+        if(x1(grid, 0) < g1(grid, 0)){
+          coords[0] = x1(grid, 0);
+          if(grid(coords) == index_record && number_of_grains != 0){
+            number_of_grains = number_of_grains - 1; 
+          }
+        }
+      }
+      if(midx>=x0(grid, 0) && midx<x1(grid, 0) && midy>=x0(grid, 1) && midy<x1(grid, 1)){
+        unsigned long index_record = -1;
+        for(int codz=x0(grid, 2); codz < x1(grid, 2); codz++){
+          coords[0] = midx;
+          coords[1] = midy;
+          coords[2] = codz;
+          if(grid(coords)!=index_record){
+            index_record = grid(coords);
+            number_of_grains = number_of_grains + 1;       
+          }
+        }
+        if(x1(grid, 2) < g1(grid, 2)){
+          coords[2] = x1(grid, 2);
+          if(grid(coords) == index_record && number_of_grains != 0){
+            number_of_grains = number_of_grains - 1; 
+          }
+        }
+      }
+*/
    }
 }
 
-template <int dim> unsigned long update(MMSP::grid<dim, int>& grid, int steps, int steps_finished, int nthreads, int step_to_nonuniform, long double &physical_time, double* temp)
+template <int dim> unsigned long update(MMSP::grid<dim, unsigned long>& grid, int steps, int steps_finished, int nthreads, int step_to_nonuniform, long double &physical_time, double* temp)
 {
 	#if (!defined MPI_VERSION) && ((defined CCNI) || (defined BGQ))
 	std::cerr<<"Error: MPI is required for CCNI."<<std::endl;
@@ -1263,7 +1238,7 @@ template <int dim> unsigned long update(MMSP::grid<dim, int>& grid, int steps, i
 	static int iterations = 1;
 	if (rank==0) print_progress(0, steps, iterations);
 	#endif
-//	ghostswap(grid); 
+	ghostswap(grid); 
 /*
   int edge = 1000;
   int number_of_fields = static_cast<int>(float(edge*edge)/(M_PI*10.*10.)); // average grain is a disk of radius 10
@@ -1308,7 +1283,7 @@ template <int dim> unsigned long update(MMSP::grid<dim, int>& grid, int steps, i
     std::cerr<<"ERROR: number of pthread is too large, please reduce it to a value <= "<<number_of_lattice_cells<<std::endl;
     exit(0);
   }
-  int model_dimension=(g1(grid, 0)-g0(grid, 0)+1);
+//  int model_dimension=(g1(grid, 0)-g0(grid, 0)+1);
 //  double *temperature_along_x = new double[model_dimension];
 
 //  if(rank==0){
@@ -1471,8 +1446,8 @@ template <int dim> unsigned long update(MMSP::grid<dim, int>& grid, int steps, i
     MPI::COMM_WORLD.Allreduce(&tmp_at_PdenominatorMax, &tmp_at_PdenominatorMax_global, 1, MPI_DOUBLE, MPI_MAX);
     MPI::COMM_WORLD.Barrier();
 
-    double t_inc = (pow(K1*lambda*pow(tmc_at_PdenominatorMax_global+1,n1), n) - 
-                     pow(K1*lambda*pow(tmc_at_PdenominatorMax_global,n1), n) )/K_/exp(-Q/R/tmp_at_PdenominatorMax_global);
+    double t_inc = (pow(lambda*(1+K1*pow(tmc_at_PdenominatorMax_global+1, n1)), n) - 
+                     pow(lambda*(1+K1*pow(tmc_at_PdenominatorMax_global, n1)), n) )/K_/exp(-Q/R/tmp_at_PdenominatorMax_global);
 
 		unsigned long start = rdtsc();
     int num_of_sublattices=0;
@@ -1495,7 +1470,7 @@ template <int dim> unsigned long update(MMSP::grid<dim, int>& grid, int steps, i
 			#endif
 
 			ghostswap(grid, sublattice); // once looped over a "color", ghostswap.
-//			ghostswap(grid); // once looped over a "color", ghostswap.
+			//			ghostswap(grid); // once looped over a "color", ghostswap.
             #ifdef MPI_VERSION
 			MPI::COMM_WORLD.Barrier();
                 #endif
@@ -1506,16 +1481,22 @@ template <int dim> unsigned long update(MMSP::grid<dim, int>& grid, int steps, i
 	  MPI::COMM_WORLD.Barrier();
     UpdateLocalTmc(grid, t_inc);
 	  MPI::COMM_WORLD.Barrier();
-    UpdateLocalTmp(grid, physical_time, temp);
+    UpdateLocalTmp(grid, physical_time);
 	  MPI::COMM_WORLD.Barrier();
+/*
+    unsigned long number_of_grains = 0;
+    calCulateGrainSize(grid, number_of_grains);
+    unsigned long total_number_of_grains = 0;
+	  MPI::COMM_WORLD.Allreduce(&number_of_grains, &total_number_of_grains, 1, MPI_UNSIGNED_LONG, MPI_SUM);
+    MPI::COMM_WORLD.Barrier();
 
-		#ifndef SILENT
-		if (rank==0) print_progress(step+1, steps, iterations);
-		#endif
+    double grain_size = 5.0*dim_y/total_number_of_grains;
+//    double grain_size = double(dim_y)/total_number_of_grains;
+*/
+if(rank==0)
+std::cout<< "physical_time "<<physical_time<<std::endl;
 		update_timer += rdtsc()-start;
 	}//loop over step
-if(rank==0)
-std::cout<< "physical_time is "<<physical_time<<std::endl;
 	#ifndef SILENT
 	++iterations;
 	#endif
@@ -1530,10 +1511,6 @@ std::cout<< "physical_time is "<<physical_time<<std::endl;
   num_of_grids_to_flip=NULL; 
   delete cell_coord;
   cell_coord=NULL;
-//	delete [] grain_orientations;
-//	grain_orientations=NULL;
-//	delete [] temperature_along_x;
-//	temperature_along_x=NULL;
 	delete [] p_threads;
 	p_threads=NULL;
 	delete [] mat_para;
@@ -1549,36 +1526,6 @@ std::cout<< "physical_time is "<<physical_time<<std::endl;
 
 }
 
-
-#ifndef SILENT
-void print_progress(const int step, const int steps, const int iterations)
-{
-	char* timestring;
-	static unsigned long tstart;
-	struct tm* timeinfo;
-
-	if (step==0) {
-		tstart = time(NULL);
-		std::time_t rawtime;
-		std::time( &rawtime );
-		timeinfo = std::localtime( &rawtime );
-		timestring = std::asctime(timeinfo);
-		timestring[std::strlen(timestring)-1] = '\0';
-		std::cout<<"Pass "<<std::setw(3)<<std::right<<iterations<<": "<<timestring<<" ["<<std::flush;
-	} else if (step==steps) {
-		unsigned long deltat = time(NULL)-tstart;
-		std::cout << "•] "
-							<<std::setw(2)<<std::right<<deltat/3600<<"h:"
-							<<std::setw(2)<<std::right<<(deltat%3600)/60<<"m:"
-							<<std::setw(2)<<std::right<<deltat%60<<"s"
-							<<" (File "<<std::setw(5)<<std::right<<iterations*steps<<")."<<std::endl;
-	} else if ((20 * step) % steps == 0) std::cout<<"• "<<std::flush;
-}
-#endif
-
 #endif
 
 #include"MMSP.main.hpp"
-
-// Formatted using astyle:
-//  astyle --style=linux --indent-col1-comments --indent=tab --indent-preprocessor --pad-header --align-pointer=type --keep-one-line-blocks --suffix=none
