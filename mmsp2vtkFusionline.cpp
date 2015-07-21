@@ -16,12 +16,11 @@ double Tv = 1.0e-3;
 double Tepsilon = 1.0;
 double repsilon = 30.0e-6;
 double lambda = 30.0e-6;  //m
-double physical_time = 2.24132;
 
 int main(int argc, char* argv[]) {
 	// command line error check
-	if (argc < 2) {
-		std::cout << "Usage: " << argv[0] << " [--help] infile [outfile]\n\n";
+	if (argc != 4) {
+		std::cout << "Usage: " << argv[0] << " [--help] infile [outfile] physical_time\n\n";
 		exit(-1);
 	}
 
@@ -42,7 +41,7 @@ int main(int argc, char* argv[]) {
 
 	// generate output file name
 	std::stringstream filename;
-	if (argc < 3)
+	if (argc < 4)
 		filename << std::string(argv[1]).substr(0, std::string(argv[1]).find_last_of(".")) << ".vti";
 	else
 		filename << argv[2];
@@ -170,6 +169,7 @@ int main(int argc, char* argv[]) {
 	int blocks;
 	input.read(reinterpret_cast<char*>(&blocks), sizeof(blocks));
   double r_fusion = 0.0;
+  double physical_time = atof(argv[argc-1]);
 
 	for (int i = 0; i < blocks; i++) {
 		// read block limits
@@ -1089,13 +1089,17 @@ int main(int argc, char* argv[]) {
 
 		// clean up
 		delete [] buffer;
-  }
 
-  // write closing markup
+		// write closing markup
 		output << "\n";
 		output << "        </DataArray>\n";
 		output << "      </CellData>\n";
 		output << "    </Piece>\n";
+	}
 
-  std::cout<<"fusion line r_fusion is "<<r_fusion<<std::endl;
+	// output closing markup
+	output << "  </ImageData>\n";
+	output << "</VTKFile>\n";
+	std::cout<<"r_fusion is "<<r_fusion<<std::endl;
 }
+
